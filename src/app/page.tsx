@@ -1,48 +1,202 @@
 'use client';
 
-import { Button } from '@/components/ui/button';
+import { useState } from 'react';
+
 import {
 	SignedIn,
 	SignedOut,
 	SignInButton,
-	SignOutButton,
+	useOrganization,
+	useUser,
 } from '@clerk/nextjs';
+
 import { useMutation, useQuery } from 'convex/react';
+
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
+
+import { ArrowUpFromLine, LoaderCircle } from 'lucide-react';
+
+import { ToastManager } from '@/lib/toast';
+
+import { Button } from '@/components/ui/button';
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+	DialogTrigger,
+} from '@/components/ui/dialog';
+import {
+	Form,
+	FormControl,
+	FormField,
+	FormItem,
+	FormLabel,
+	FormMessage,
+} from '@/components/ui/form';
+import { Input } from '@/components/ui/input';
+
 import { api } from '../../convex/_generated/api';
 
+const formSchema = z.object({
+	title: z.string().min(1).max(200),
+	file: z.custom<File | null>(
+		val => val instanceof File,
+		'The file is required',
+	),
+});
+
 export default function Home() {
+	const organization = useOrganization();
+	const user = useUser();
+
+	let orgId = null;
+	if (organization.isLoaded && user.isLoaded) {
+		orgId = organization.organization?.id ?? user.user?.id;
+	}
+
+	const [isFileDialogOpen, setIsFileDialogOpen] = useState(false);
+
+	const files = useQuery(api.files.getFiles, orgId ? { orgId } : 'skip');
 	const createFile = useMutation(api.files.createFile);
-	const files = useQuery(api.files.getFiles);
+	const generateUploadUrl = useMutation(api.files.generateUploadUrl);
+
+	const form = useForm<z.infer<typeof formSchema>>({
+		resolver: zodResolver(formSchema),
+		defaultValues: {
+			title: '',
+			file: null,
+		},
+	});
+
+	const onSubmit = async (values: z.infer<typeof formSchema>) => {
+		if (!orgId) return;
+
+		const postUrl = await generateUploadUrl();
+
+		const result = await fetch(postUrl, {
+			method: 'POST',
+			headers: { 'Content-Type': values.file?.type ?? '' },
+			body: values.file,
+		});
+
+		const { storageId } = await result.json();
+
+		await createFile({ name: values.title, orgId, storageId });
+
+		setIsFileDialogOpen(false);
+
+		ToastManager.success('File uploaded successfully');
+	};
 
 	return (
-		<div className='grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]'>
+		<main className='container mx-auto pt-12'>
 			<SignedIn>
-				<h1 className='text-3xl font-bold text-center'>
-					Welcome to OrganizeIt!
-				</h1>
-				<SignOutButton>
-					<Button>Sign Out</Button>
-				</SignOutButton>
+				<div className='flex justify-between'>
+					<h1 className='text-4xl font-bold'>Your Files</h1>
+
+					<Dialog
+						open={isFileDialogOpen}
+						onOpenChange={isOpen => {
+							setIsFileDialogOpen(isOpen);
+							form.reset();
+						}}
+					>
+						<DialogTrigger asChild>
+							<Button>Upload File</Button>
+						</DialogTrigger>
+
+						<DialogContent>
+							<DialogHeader>
+								<DialogTitle>Upload your file here</DialogTitle>
+
+								<DialogDescription>
+									This file will be accessible by anyone in
+									your organization.
+								</DialogDescription>
+							</DialogHeader>
+
+							<Form {...form}>
+								<form
+									onSubmit={form.handleSubmit(onSubmit)}
+									className='space-y-8'
+								>
+									<FormField
+										control={form.control}
+										name='title'
+										render={({ field }) => {
+											return (
+												<FormItem>
+													<FormLabel>Title</FormLabel>
+													<FormControl>
+														<Input {...field} />
+													</FormControl>
+													<FormMessage />
+												</FormItem>
+											);
+										}}
+									/>
+
+									<FormField
+										control={form.control}
+										name='file'
+										render={({
+											field: { onChange },
+											...field
+										}) => (
+											<FormItem>
+												<FormLabel>File</FormLabel>
+												<FormControl>
+													<Input
+														type='file'
+														{...field}
+														onChange={e => {
+															if (!e.target.files)
+																return;
+
+															onChange(
+																e.target
+																	.files[0],
+															);
+														}}
+													/>
+												</FormControl>
+												<FormMessage />
+											</FormItem>
+										)}
+									/>
+
+									<Button
+										type='submit'
+										disabled={
+											form.formState.isSubmitting || false
+										}
+										className='flex items-center gap-1'
+									>
+										{form.formState.isSubmitting ? (
+											<LoaderCircle className='w-4 h-4 animate-spin' />
+										) : (
+											<ArrowUpFromLine className='w-4 h-4' />
+										)}
+										Submit
+									</Button>
+								</form>
+							</Form>
+						</DialogContent>
+					</Dialog>
+				</div>
+
+				{files?.map(file => <div key={file._id}>{file.name}</div>)}
 			</SignedIn>
 
 			<SignedOut>
-				<h1 className='text-3xl font-bold text-center'>
-					Welcome to OrganizeIt!
-				</h1>
 				<SignInButton>
 					<Button>Sign In</Button>
 				</SignInButton>
 			</SignedOut>
-
-			{files?.map(file => <div key={file._id}>{file.name}</div>)}
-
-			<Button
-				onClick={() => {
-					createFile({ name: 'Test File' });
-				}}
-			>
-				Create File
-			</Button>
-		</div>
+		</main>
 	);
 }

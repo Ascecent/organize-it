@@ -1,7 +1,7 @@
 const config = {
 	providers: [
 		{
-			domain: 'https://your-issuer-url.clerk.accounts.dev/',
+			domain: process.env.CLERK_HOSTNAME,
 			applicationID: 'convex',
 		},
 	],
